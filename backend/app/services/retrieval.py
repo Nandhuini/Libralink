@@ -12,9 +12,37 @@ _INDEX_CHUNKS: list[dict] = []
 MIN_SCORE = float(os.getenv("RETRIEVAL_MIN_SCORE", "0.0"))
 
 
+
+def _stem(token: str) -> str:
+    """Apply lightweight suffix normalization without extra dependencies."""
+    if len(token) > 5 and token.endswith("ies"):
+        return token[:-3] + "y"
+
+    if len(token) > 5 and token.endswith("ing"):
+        token = token[:-3]
+    elif len(token) > 4 and token.endswith("ed"):
+        token = token[:-2]
+    elif len(token) > 4 and token.endswith("es"):
+        token = token[:-2]
+    elif len(token) > 3 and token.endswith("s"):
+        token = token[:-1]
+
+    # Normalize common doubled consonants: running -> run.
+    if (
+        len(token) > 3
+        and token[-1] == token[-2]
+        and token[-1] not in "aeiou"
+    ):
+        token = token[:-1]
+
+    return token
+
+
 def _tokenize(text: str) -> list[str]:
-    """Normalize text into simple lowercase word tokens."""
-    return re.findall(r"\b[a-zA-Z0-9]+\b", text.lower())
+    """Normalize text into lowercase, lightly stemmed word tokens."""
+    tokens = re.findall(r"\b[a-zA-Z0-9]+\b", text.lower())
+    return [_stem(token) for token in tokens]
+
 
 
 def build_index() -> None:
