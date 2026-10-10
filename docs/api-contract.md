@@ -86,3 +86,32 @@ Supported error codes:
 - Source metadata must be resolved by the application.
 - Unsupported topics must return insufficient evidence.
 - An LLM failure must never return fabricated notes.
+## 9. Study Notes Generation Mode
+
+The POST /api/notes endpoint returns grounded study notes.
+
+Additional response fields:
+
+- `mode`: `"llm"` or `"extractive"`.
+- `generated_by`: Provider and model information for LLM mode; `null` for extractive mode.
+
+### Extractive Fallback
+
+If the LLM is unavailable, times out, or returns an invalid response, the application falls back to extractive notes selected from retrieved passages.
+
+### Citation Integrity
+
+- Every citation must reference a retrieved `chunk_id`.
+- Source metadata must be resolved from stored records.
+- Unknown chunk IDs must be rejected.
+- If evidence is insufficient, return no notes and do not call the LLM.
+
+### Page Numbering
+
+- `pdf_page_index` is zero-based.
+- `printed_page_label` remains unverified until confirmed.
+- Never present an unverified printed page number as verified.
+
+### Evaluation Status
+
+The evaluation must cover 15 in-collection topics and 3 out-of-collection topics. Report only actual measured results.
