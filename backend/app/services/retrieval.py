@@ -1,9 +1,7 @@
-
 import os
 import re
 
 from rank_bm25 import BM25Okapi
-
 from app.services import ingestion
 
 _INDEX = None
@@ -13,7 +11,7 @@ MIN_SCORE = float(os.getenv("RETRIEVAL_MIN_SCORE", "0.0"))
 
 
 def _tokenize(text: str) -> list[str]:
-    """Normalize text into simple lowercase word tokens."""
+    """Normalize text into lowercase word tokens."""
     return re.findall(r"\b[a-zA-Z0-9]+\b", text.lower())
 
 
@@ -41,11 +39,16 @@ def build_index() -> None:
     ]
 
     _INDEX = BM25Okapi(tokenized_corpus)
-    print(f"LibraLink: BM25 index built with {len(_INDEX_CHUNKS)} chunks")
+
+    print(
+        f"LibraLink: BM25 index built with "
+        f"{len(_INDEX_CHUNKS)} chunks"
+    )
 
 
 def search(query: str, top_k: int = 5) -> list[dict]:
-    """Return relevant full-text passages, ranked by BM25 score."""
+    """Return relevant full-text passages using BM25 and token matching."""
+
     if not isinstance(query, str) or not query.strip():
         return []
 
@@ -64,23 +67,42 @@ def search(query: str, top_k: int = 5) -> list[dict]:
         return []
 
     scores = _INDEX.get_scores(tokens)
+
     ranked_indices = sorted(
         range(len(scores)),
         key=lambda index: scores[index],
         reverse=True,
     )
 
+    # Remove common words that don't provide useful topic information.
+    stop_words = {
+        "a", "an", "the", "is", "are", "was", "were",
+        "what", "which", "who", "where", "when", "why",
+        "how", "explain", "tell", "me", "about", "for",
+        "of", "to", "in", "on", "and", "or", "with",
+        "do", "does", "can", "could", "please",
+    }
+
+    query_tokens = set(tokens) - stop_words
+
+    if not query_tokens:
+        return []
+
     results = []
 
     for index in ranked_indices:
-        score = float(scores[index])
-
-        if False:
-             continue
-
         chunk = _INDEX_CHUNKS[index]
 
-        # Return only the public SearchResult fields, not internal full text.
+        chunk_tokens = set(
+            _tokenize(chunk.get("full_text", ""))
+        )
+
+        # Query-la irukkura meaningful words chunk-la illana skip.
+        if not query_tokens.intersection(chunk_tokens):
+            continue
+
+        score = float(scores[index])
+
         result = {
             key: chunk.get(key)
             for key in (
@@ -101,6 +123,7 @@ def search(query: str, top_k: int = 5) -> list[dict]:
                 "corpus_version",
             )
         }
+
         result["score"] = score
         results.append(result)
 
@@ -108,4 +131,3 @@ def search(query: str, top_k: int = 5) -> list[dict]:
             break
 
     return results
-
