@@ -1,0 +1,13 @@
+{
+  "books": [
+    {
+      "book_id": "demo-dsa",
+      "source_file_id": "demo-file-001",
+      "title": "Sample Data Structures Textbook",
+      "author": "Demo Author",
+      "edition": "Demo Edition",
+      "filename": "sample.pdf",
+      "access_status": "full_text_available"
+    }
+  ]
+}
