@@ -3,7 +3,6 @@ import os
 import re
 
 from rank_bm25 import BM25Okapi
-
 from app.services import ingestion
 
 _INDEX = None
@@ -11,10 +10,28 @@ _INDEX_CHUNKS: list[dict] = []
 
 MIN_SCORE = float(os.getenv("RETRIEVAL_MIN_SCORE", "0.0"))
 
+STOP_WORDS = {
+    "a", "an", "the", "is", "are", "was", "were",
+    "what", "which", "who", "where", "when", "why",
+    "how", "explain", "tell", "me", "about", "for",
+    "of", "to", "in", "on", "and", "or", "with",
+    "do", "does", "can", "could", "please",
+}
+
+SYNONYMS = {
+    "average": ["mean"],
+    "mean": ["average"],
+    "spread": ["variance", "standard deviation"],
+    "variance": ["spread"],
+    "chance": ["probability"],
+    "probability": ["chance"],
+    "gaussian": ["normal distribution"],
+    "normal": ["gaussian"],
+}
 
 
 def _stem(token: str) -> str:
-    """Apply lightweight suffix normalization without extra dependencies."""
+    """Apply lightweight suffix normalization."""
     if len(token) > 5 and token.endswith("ies"):
         return token[:-3] + "y"
 
@@ -27,7 +44,6 @@ def _stem(token: str) -> str:
     elif len(token) > 3 and token.endswith("s"):
         token = token[:-1]
 
-    # Normalize common doubled consonants: running -> run.
     if (
         len(token) > 3
         and token[-1] == token[-2]
@@ -39,14 +55,13 @@ def _stem(token: str) -> str:
 
 
 def _tokenize(text: str) -> list[str]:
-    """Normalize text into lowercase, lightly stemmed word tokens."""
+    """Normalize text into lowercase, lightly stemmed tokens."""
     tokens = re.findall(r"\b[a-zA-Z0-9]+\b", text.lower())
     return [_stem(token) for token in tokens]
 
 
-
 def build_index() -> None:
-    """Build an in-memory BM25 index from authorized full-text chunks."""
+    """Build BM25 index from authorized full-text chunks."""
     global _INDEX, _INDEX_CHUNKS
 
     _, chunks = ingestion.load_corpus()
@@ -73,7 +88,7 @@ def build_index() -> None:
 
 
 def search(query: str, top_k: int = 5) -> list[dict]:
-    """Return relevant full-text passages, ranked by BM25 score."""
+    """Return relevant full-text passages ranked by BM25."""
     if not isinstance(query, str) or not query.strip():
         return []
 
@@ -87,11 +102,20 @@ def search(query: str, top_k: int = 5) -> list[dict]:
         return []
 
     tokens = _tokenize(query)
-
     if not tokens:
         return []
 
-    scores = _INDEX.get_scores(tokens)
+    query_tokens = set(tokens) - STOP_WORDS
+    expanded_tokens = list(tokens)
+
+    for token in query_tokens:
+        for synonym in SYNONYMS.get(token, []):
+            expanded_tokens.extend(_tokenize(synonym))
+
+    if not query_tokens:
+        return []
+
+    scores = _INDEX.get_scores(expanded_tokens)
     ranked_indices = sorted(
         range(len(scores)),
         key=lambda index: scores[index],
@@ -104,29 +128,29 @@ def search(query: str, top_k: int = 5) -> list[dict]:
         score = float(scores[index])
 
         if score <= 0 or score < MIN_SCORE:
-             continue
+            continue
 
         chunk = _INDEX_CHUNKS[index]
+        chunk_tokens = set(_tokenize(chunk.get("full_text", "")))
 
-        # Return only the public SearchResult fields, not internal full text.
+        if not query_tokens.intersection(chunk_tokens):
+            # Also permit matches through configured synonyms.
+            synonym_tokens = set()
+            for token in query_tokens:
+                for synonym in SYNONYMS.get(token, []):
+                    synonym_tokens.update(_tokenize(synonym))
+
+            if not synonym_tokens.intersection(chunk_tokens):
+                continue
+
         result = {
             key: chunk.get(key)
             for key in (
-                "chunk_id",
-                "book_id",
-                "source_file_id",
-                "title",
-                "author",
-                "edition",
-                "pdf_page_index",
-                "pdf_page_base",
-                "printed_page_label",
-                "printed_page_verified",
-                "section_heading",
-                "excerpt",
-                "access_status",
-                "extraction_method",
-                "corpus_version",
+                "chunk_id", "book_id", "source_file_id", "title",
+                "author", "edition", "pdf_page_index", "pdf_page_base",
+                "printed_page_label", "printed_page_verified",
+                "section_heading", "excerpt", "access_status",
+                "extraction_method", "corpus_version",
             )
         }
         result["score"] = score
@@ -136,4 +160,3 @@ def search(query: str, top_k: int = 5) -> list[dict]:
             break
 
     return results
-

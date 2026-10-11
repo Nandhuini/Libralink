@@ -1,4 +1,3 @@
-
 {
   "books": [
     {
@@ -10,6 +9,15 @@
       "filename": "stats_intro.pdf",
       "access_status": "full_text_available",
       "metadata_notes": "Team-authored demo notes"
+    },
+    {
+      "book_id": "demo-dsa",
+      "source_file_id": "demo-file-001",
+      "title": "Sample Data Structures Textbook",
+      "author": "Demo Author",
+      "edition": "Demo Edition",
+      "filename": "sample.pdf",
+      "access_status": "full_text_available"
     }
   ]
 }
