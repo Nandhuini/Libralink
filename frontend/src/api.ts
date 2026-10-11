@@ -1,4 +1,3 @@
-
 import type {
   ApiError,
   BooksResponse,
@@ -12,52 +11,133 @@ import type {
   SearchRequest,
   SearchResponse,
   TokenBalanceResponse,
+  QuizRequest,
+  QuizResponse,
+  QuizSubmitRequest,
+  QuizSubmitResponse,
 } from './types'
 
-// Backend URL can be configured through frontend/.env.local.
-// Local development default: http://localhost:8000
 const API_BASE = (
-  import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+  import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000'
 ).replace(/\/+$/, '')
 
-// Common function for sending requests to the backend.
+export class ApiClientError extends Error {
+  readonly kind: 'network' | 'timeout' | 'http' | 'response'
+  readonly status?: number
+
+  constructor(
+    message: string,
+    kind: 'network' | 'timeout' | 'http' | 'response',
+    status?: number,
+  ) {
+    super(message)
+    this.name = 'ApiClientError'
+    this.kind = kind
+    this.status = status
+  }
+}
+
+// Common function for backend requests
 async function request<T>(
   path: string,
   options: RequestInit = {},
+  responseType: 'json' | 'blob' = 'json',
+  timeoutMs = 15000,
 ): Promise<T> {
-  let response: Response
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
+  const relayAbort = () => controller.abort()
+  options.signal?.addEventListener('abort', relayAbort, { once: true })
 
   try {
-    response = await fetch(`${API_BASE}${path}`, {
-      ...options,
-      headers: {
-        ...(options.body
-          ? { 'Content-Type': 'application/json' }
-          : {}),
-        ...options.headers,
-      },
-    })
-  } catch {
-    throw new Error(
-      'Cannot connect to the LibraLink backend. Check whether the server is running.',
-    )
+    let response: Response
+    try {
+      response = await fetch(`${API_BASE}${path}`, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          ...(options.body
+            ? { 'Content-Type': 'application/json' }
+            : {}),
+          ...options.headers,
+        },
+      })
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new ApiClientError(
+          'The request timed out. Check the backend and try again.',
+          'timeout',
+        )
+      }
+      throw new ApiClientError(
+        'Cannot reach the LibraLink backend. Check that it is running and that the API URL is correct.',
+        'network',
+      )
+    }
+
+    if (responseType === 'blob' && response.ok) {
+      try {
+        return await response.blob() as T
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw new ApiClientError(
+            'The request timed out while reading the backend response.',
+            'timeout',
+          )
+        }
+        throw new ApiClientError(
+          'The backend response could not be read.',
+          'response',
+          response.status,
+        )
+      }
+    }
+
+    let data: unknown
+    try {
+      data = await response.json()
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new ApiClientError(
+          'The request timed out while reading the backend response.',
+          'timeout',
+        )
+      }
+      throw new ApiClientError(
+        'The backend returned an invalid or empty JSON response.',
+        'response',
+        response.status,
+      )
+    }
+
+    if (!response.ok) {
+      const payload = data && typeof data === 'object'
+        ? data as Record<string, unknown>
+        : {}
+      const errorEnvelope = payload.error && typeof payload.error === 'object'
+        ? payload.error as ApiError['error']
+        : undefined
+      const envelopeMessage = errorEnvelope?.message
+      const detail = payload.detail
+      const message =
+        envelopeMessage ||
+        (typeof detail === 'string'
+          ? detail
+          : response.status === 422
+            ? 'The request was rejected. Check the required fields and values.'
+            : `The backend returned HTTP ${response.status}.`)
+
+      throw new ApiClientError(message, 'http', response.status)
+    }
+
+    return data as T
+  } finally {
+    window.clearTimeout(timeout)
+    options.signal?.removeEventListener('abort', relayAbort)
   }
-
-  const data: unknown = await response.json().catch(() => null)
-
-  if (!response.ok) {
-    const apiError = data as ApiError | null
-
-    throw new Error(
-      apiError?.error?.message ||
-        `Request failed with status ${response.status}.`,
-    )
-  }
-
-  return data as T
 }
 
-// Validate query length according to the API contract.
+// Validate search and notes query
 function validateQuery(query: string): string {
   const normalizedQuery = query.trim()
 
@@ -68,7 +148,7 @@ function validateQuery(query: string): string {
   return normalizedQuery
 }
 
-// Validate top_k according to the API contract.
+// Validate search result count
 function validateTopK(topK?: number): number {
   const value = topK ?? 5
 
@@ -149,10 +229,60 @@ export function getTokenBalance(
 
 // POST /api/export/notes
 export function exportNotes(
-  notes: unknown,
+  notes: NotesResponse,
 ): Promise<ExportNotesResponse> {
-  return request<ExportNotesResponse>('/api/export/notes', {
+  return request<ExportNotesResponse>(
+    '/api/export/notes',
+    {
+      method: 'POST',
+      body: JSON.stringify({ notes }),
+    },
+    'blob',
+  )
+}
+
+// Validate quiz topic
+function validateQuizTopic(topic: string): string {
+  const normalizedTopic = topic.trim()
+
+  if (normalizedTopic.length < 1 || normalizedTopic.length > 300) {
+    throw new Error(
+      'Quiz topic must contain between 1 and 300 characters.',
+    )
+  }
+
+  return normalizedTopic
+}
+
+// POST /api/quiz
+export function generateQuiz(
+  input: QuizRequest,
+): Promise<QuizResponse> {
+  const topic = validateQuizTopic(input.topic)
+  const question_count = input.question_count ?? 5
+
+  if (
+    !Number.isInteger(question_count) ||
+    question_count < 1 ||
+    question_count > 10
+  ) {
+    throw new Error(
+      'Question count must be an integer between 1 and 10.',
+    )
+  }
+
+  return request<QuizResponse>('/api/quiz', {
     method: 'POST',
-    body: JSON.stringify(notes),
+    body: JSON.stringify({ topic, question_count }),
+  }, 'json', 105000)
+}
+
+// POST /api/quiz/submit
+export function submitQuiz(
+  input: QuizSubmitRequest,
+): Promise<QuizSubmitResponse> {
+  return request<QuizSubmitResponse>('/api/quiz/submit', {
+    method: 'POST',
+    body: JSON.stringify(input),
   })
 }

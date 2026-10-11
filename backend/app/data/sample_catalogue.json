@@ -1,0 +1,33 @@
+{
+    "books":  [
+                  {
+                      "book_id":  "bk_demo_stats",
+                      "source_file_id":  "src_demo_stats",
+                      "title":  "Demo Statistics Notes",
+                      "author":  "LibraLink Demo Team",
+                      "edition":  "Demo edition",
+                      "filename":  "stats_intro.pdf",
+                      "access_status":  "full_text_available",
+                      "metadata_notes":  "Team-authored demo notes"
+                  },
+                  {
+                      "book_id":  "demo-dsa",
+                      "source_file_id":  "demo-file-001",
+                      "title":  "Sample Data Structures Textbook",
+                      "author":  "Demo Author",
+                      "edition":  "Demo Edition",
+                      "filename":  "sample.pdf",
+                      "access_status":  "full_text_available"
+                  },
+                  {
+                      "book_id":  "bk_multivariate_stats",
+                      "source_file_id":  "src_multivariate_stats",
+                      "title":  "Applied Multivariate Statistical Analysis",
+                      "author":  "Richard A. Johnson and Dean W. Wichern",
+                      "edition":  "Sixth edition",
+                      "filename":  "applied_multivariate.pdf",
+                      "access_status":  "full_text_available",
+                      "metadata_notes":  "User-provided textbook PDF"
+                  }
+              ]
+}

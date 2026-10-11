@@ -1175,6 +1175,119 @@ button:disabled {
   margin-top: 18px;
 }
 
+.quiz-count-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  color: #68766c;
+  font-size: 10px;
+}
+
+.quiz-count-label select {
+  min-width: 54px;
+  height: 36px;
+  padding: 0 8px;
+  border: 1px solid #dfe5dc;
+  border-radius: 6px;
+  background: #fff;
+  color: #33483a;
+}
+
+.quiz-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 20px;
+}
+
+.quiz-options {
+  display: grid;
+  gap: 7px;
+  margin-top: 13px;
+}
+
+.quiz-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 11px;
+  border: 1px solid #e5e9e2;
+  border-radius: 6px;
+  color: #59675d;
+  font-size: 11px;
+  line-height: 1.6;
+  cursor: pointer;
+}
+
+.quiz-option:has(input:checked) {
+  border-color: #9fbea5;
+  background: #f2f7f0;
+  color: #315c3e;
+}
+
+.quiz-option input {
+  flex-shrink: 0;
+  margin: 3px 0 0;
+  accent-color: var(--green);
+}
+
+.quiz-submit-row,
+.quiz-score {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 0;
+  color: #69766d;
+  font-size: 11px;
+}
+
+.quiz-score {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  padding: 17px;
+  border: 1px solid #dce8da;
+  border-radius: 8px;
+  background: #f3f8f1;
+}
+
+.quiz-score strong {
+  color: var(--green-dark);
+  font-family: 'Manrope', sans-serif;
+  font-size: 20px;
+}
+
+.quiz-feedback {
+  padding: 11px 12px;
+  margin-top: 12px;
+  border: 1px solid #e5e9e2;
+  border-radius: 6px;
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.quiz-feedback.correct {
+  border-color: #cce2cd;
+  background: #f2f8f1;
+  color: #356345;
+}
+
+.quiz-feedback.incorrect {
+  border-color: #ecd9c8;
+  background: #fff8f0;
+  color: #795d3b;
+}
+
+.quiz-feedback p {
+  margin: 5px 0 0;
+}
+
+.quiz-feedback small {
+  display: block;
+  margin-top: 5px;
+}
+
 @media (min-width: 1500px) {
   .page-container {
     padding-top: 32px;
@@ -1319,6 +1432,17 @@ button:disabled {
   .search-button {
     width: 100%;
     padding: 12px;
+  }
+
+  .quiz-count-label {
+    width: 100%;
+    justify-content: space-between;
+    padding: 5px 2px;
+  }
+
+  .quiz-submit-row {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .suggestions {

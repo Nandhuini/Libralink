@@ -1,881 +1,394 @@
+import { useEffect, useState } from 'react'
+import {
+	generateQuiz,
+	getBooks,
+	getStudyNotes,
+	searchBooks,
+	submitQuiz,
+} from './api'
+import type {
+	BookRecord,
+	NotesResponse,
+	QuizResponse,
+	SearchResponse,
+	QuizSubmitResponse,
+} from './types'
 
-import { useMemo, useState } from 'react'
-import type { FormEvent } from 'react'
-import { getStudyNotes } from './api'
-import type { NotesResponse, NotesSource } from './types'
-import './App.css'
+type View = 'resources' | 'notes' | 'quiz'
 
-type Book = {
-  id: number
-  title: string
-  author: string
-  category: string
-  year: string
-  access: 'Digital text available' | 'Catalogue only' | 'Physical only'
-  location: string
-  description: string
-  tags: string[]
+const viewLabels: Record<View, string> = {
+	resources: 'Resource Discovery',
+	notes: 'Study Notes',
+	quiz: 'Practice Quiz',
 }
 
-const sampleBooks: Book[] = [
-  {
-    id: 1,
-    title: 'Database System Concepts',
-    author: 'Abraham Silberschatz, Henry F. Korth and S. Sudarshan',
-    category: 'Computer Science',
-    year: '2019',
-    access: 'Digital text available',
-    location: 'Computer Science · Database Systems',
-    description:
-      'An introduction to database architecture, relational models, SQL, transactions and database design.',
-    tags: ['database', 'sql', 'transactions', 'relational model'],
-  },
-  {
-    id: 2,
-    title: 'Fundamentals of Data Science',
-    author: 'Sample catalogue record',
-    category: 'Data Science',
-    year: '2023',
-    access: 'Catalogue only',
-    location: 'Data Science · General Collection',
-    description:
-      'A catalogue record for a book about data analysis, statistics and machine learning.',
-    tags: ['data science', 'statistics', 'machine learning', 'analytics'],
-  },
-  {
-    id: 3,
-    title: 'Introduction to Algorithms',
-    author: 'Thomas H. Cormen and others',
-    category: 'Computer Science',
-    year: '2009',
-    access: 'Physical only',
-    location: 'Shelf location not verified',
-    description:
-      'A reference on algorithm design, sorting, graph algorithms and computational complexity.',
-    tags: ['algorithms', 'sorting', 'graphs', 'programming'],
-  },
-]
-
-const sampleNotes = [
-  {
-    heading: 'Database fundamentals',
-    text: 'A database organizes related information so it can be stored, retrieved and managed systematically.',
-    source: 'Database System Concepts',
-    page: 'Sample page — not verified',
-  },
-  {
-    heading: 'Relational model',
-    text: 'The relational model represents data using relations, commonly displayed as tables with rows and columns.',
-    source: 'Database System Concepts',
-    page: 'Sample page — not verified',
-  },
-  {
-    heading: 'Transactions',
-    text: 'A database transaction is a logical unit of work. Its correctness depends on the database system enforcing the required transaction properties.',
-    source: 'Database System Concepts',
-    page: 'Sample page — not verified',
-  },
-]
-
-function getAccessStatusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    digital_available: 'Digital text available',
-    digital_full_text: 'Digital full text',
-    licensed_link: 'Licensed link',
-    metadata_only: 'Catalogue only',
-    physical_only: 'Physical only',
-    unknown: 'Access unknown',
-  }
-
-  return labels[status] ?? status.replaceAll('_', ' ')
+function errorText(error: unknown): string {
+	return error instanceof Error
+		? error.message
+		: 'The request could not be completed.'
 }
 
-function getVerifiedPage(source: NotesSource): string | null {
-  if (source.printed_page_verified && source.printed_page_label) {
-    return `Printed page ${source.printed_page_label}`
-  }
+function pageLabel(book: BookRecord): string {
+	const status = (book.access_status ?? '').toLowerCase()
+	if (status.includes('full_text') || status.includes('digital')) {
+		return 'Full text available'
+	}
+	if (status.includes('physical')) return 'Physical collection'
+	return 'Catalogue record'
+}
 
-  if (
-    source.pdf_page_index !== null &&
-    source.pdf_page_index !== undefined
-  ) {
-    return `PDF page ${source.pdf_page_index + (source.pdf_page_base ?? 0) + 1}`
-  }
-
-  return null
+function pageNumber(page: number | null | undefined): string {
+	return page == null ? 'Page not listed' : `Page ${page}`
 }
 
 function App() {
-  const [query, setQuery] = useState('')
-  const [submittedQuery, setSubmittedQuery] = useState('')
-  const [activeTab, setActiveTab] = useState<'search' | 'notes'>('search')
-  const [selectedBook, setSelectedBook] = useState<Book | null>(null)
-  const [showAllBooks, setShowAllBooks] = useState(false)
-
-  const [notesQuery, setNotesQuery] = useState('')
-  const [notesResponse, setNotesResponse] = useState<NotesResponse | null>(null)
-  const [notesLoading, setNotesLoading] = useState(false)
-  const [notesError, setNotesError] = useState('')
-  const [expandedSource, setExpandedSource] = useState<string | null>(null)
-
-  const filteredBooks = useMemo(() => {
-    const normalizedQuery = submittedQuery.trim().toLowerCase()
-
-    if (!normalizedQuery) return sampleBooks
-
-    const words = normalizedQuery.split(/\s+/)
-
-    return sampleBooks.filter((book) => {
-      const searchableText = [
-        book.title,
-        book.author,
-        book.category,
-        book.description,
-        ...book.tags,
-      ]
-        .join(' ')
-        .toLowerCase()
-
-      return words.some((word) => searchableText.includes(word))
-    })
-  }, [submittedQuery])
-
-  const visibleBooks = showAllBooks
-    ? filteredBooks
-    : filteredBooks.slice(0, 3)
-
-  async function handleGenerateNotes(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-
-    const normalizedQuery = notesQuery.trim()
-
-    if (!normalizedQuery) {
-      setNotesError('Enter a topic before generating study notes.')
-      setNotesResponse(null)
-      return
-    }
-
-    if (normalizedQuery.length > 300) {
-      setNotesError('Your topic must be 300 characters or fewer.')
-      setNotesResponse(null)
-      return
-    }
-
-    setNotesLoading(true)
-    setNotesError('')
-    setNotesResponse(null)
-    setExpandedSource(null)
-
-    try {
-      const response = await getStudyNotes({
-        query: normalizedQuery,
-        top_k: 5,
-      })
-
-      setNotesResponse(response)
-    } catch (error) {
-      setNotesError(
-        error instanceof Error
-          ? error.message
-          : 'Unable to generate study notes. Please try again.',
-      )
-    } finally {
-      setNotesLoading(false)
-    }
-  }
-
-  function handleSearch(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setSubmittedQuery(query.trim())
-    setSelectedBook(null)
-    setShowAllBooks(false)
-    setActiveTab('search')
-  }
-
-  function resetSearch() {
-    setQuery('')
-    setSubmittedQuery('')
-    setSelectedBook(null)
-    setShowAllBooks(false)
-    setActiveTab('search')
-  }
-
-  function exploreNotes(book?: Book) {
-    if (book) {
-      setNotesQuery(book.title)
-    } else if (submittedQuery) {
-      setNotesQuery(submittedQuery)
-    }
-
-    setNotesResponse(null)
-    setNotesError('')
-    setActiveTab('notes')
-    setSelectedBook(null)
-  }
-
-  function renderSource(source: NotesSource) {
-    const page = getVerifiedPage(source)
-    const isExpanded = expandedSource === source.chunk_id
-
-    return (
-      <article className="citation-chip" key={source.chunk_id}>
-        <button
-          type="button"
-          className="citation-source-button"
-          onClick={() =>
-            setExpandedSource(isExpanded ? null : source.chunk_id)
-          }
-          aria-expanded={isExpanded}
-        >
-          <span aria-hidden="true">▤</span>
-          <span>
-            {source.title}
-            {page ? ` · ${page}` : ' · Page not verified'}
-          </span>
-          <span className="source-expand-indicator">
-            {isExpanded ? '−' : '+'}
-          </span>
-        </button>
-
-        {isExpanded && (
-          <div className="source-details">
-            <h4>{source.title}</h4>
-
-            {source.author && <p>Author: {source.author}</p>}
-            {source.edition && <p>Edition: {source.edition}</p>}
-            {source.section_heading && (
-              <p>Section: {source.section_heading}</p>
-            )}
-
-            <p>
-              Access status: {getAccessStatusLabel(source.access_status)}
-            </p>
-
-            {source.is_sample_data && (
-              <p className="source-sample-warning">
-                Demo source record — verify against the original material.
-              </p>
-            )}
-
-            {source.excerpt ? (
-              <blockquote>{source.excerpt}</blockquote>
-            ) : (
-              <p>No source excerpt was provided.</p>
-            )}
-
-            {!source.printed_page_verified && (
-              <p className="source-page-warning">
-                The printed page number has not been verified.
-              </p>
-            )}
-          </div>
-        )}
-      </article>
-    )
-  }
-
-  return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <a
-          className="brand"
-          href="#"
-          onClick={(event) => {
-            event.preventDefault()
-            resetSearch()
-          }}
-        >
-          <span className="brand-icon">L</span>
-          <span>
-            <strong>LibraLink</strong>
-            <small>Library research companion</small>
-          </span>
-        </a>
-
-        <div className="sidebar-label">WORKSPACE</div>
-
-        <button
-          className={`nav-item ${activeTab === 'search' ? 'active' : ''}`}
-          onClick={() => setActiveTab('search')}
-        >
-          <span className="nav-icon">⌕</span>
-          Find resources
-        </button>
-
-        <button
-          className={`nav-item ${activeTab === 'notes' ? 'active' : ''}`}
-          onClick={() => setActiveTab('notes')}
-        >
-          <span className="nav-icon">▤</span>
-          Study notes
-          <span className="nav-count">
-            {notesResponse?.sections.length ?? 3}
-          </span>
-        </button>
-
-        <div className="sidebar-divider" />
-
-        <div className="sidebar-label">YOUR LIBRARY</div>
-        <div className="library-link"><span>▧</span>Computer Science</div>
-        <div className="library-link"><span>▧</span>Data Science</div>
-        <div className="library-link"><span>▧</span>General Collection</div>
-
-        <div className="sidebar-bottom">
-          <div className="help-card">
-            <span className="help-icon">i</span>
-            <strong>Research with confidence</strong>
-            <p>Always verify your study notes against the original source.</p>
-          </div>
-
-          <div className="profile">
-            <div className="avatar">S</div>
-            <div>
-              <strong>Student workspace</strong>
-              <small>Prototype account</small>
-            </div>
-            <span className="profile-menu">•••</span>
-          </div>
-        </div>
-      </aside>
-
-      <main className="main-content">
-        <header className="topbar">
-          <div className="breadcrumb">
-            Workspace <span>/</span>{' '}
-            {activeTab === 'search' ? 'Find resources' : 'Study notes'}
-          </div>
-          <div className="prototype-pill">
-            <span className="status-dot" />
-            Prototype mode
-          </div>
-        </header>
-
-        <div className="page-container">
-          <div className="notice-banner">
-            <span className="notice-symbol">i</span>
-            <p>
-              <strong>Prototype data notice.</strong> Verify every claim
-              against the original source. Notes from the backend are displayed
-              only when the API returns them.
-            </p>
-          </div>
-
-          <section className="welcome-section">
-            <div>
-              <div className="eyebrow">YOUR ACADEMIC LIBRARY</div>
-              <h1>
-                From a topic to the
-                <br />
-                <span>right page.</span>
-              </h1>
-              <p className="welcome-description">
-                Discover library resources, explore relevant material and keep
-                your research connected to its sources.
-              </p>
-            </div>
-
-            <div className="welcome-illustration" aria-hidden="true">
-              <div className="illustration-circle circle-one" />
-              <div className="illustration-circle circle-two" />
-              <div className="book-stack">
-                <div className="book book-back" />
-                <div className="book book-middle" />
-                <div className="book book-front">
-                  <span>LIBRARY</span>
-                  <div className="book-line" />
-                  <div className="book-line short" />
-                  <div className="book-emblem">L</div>
-                </div>
-              </div>
-              <div className="floating-note note-one">Source verified</div>
-              <div className="floating-note note-two">Study smarter</div>
-            </div>
-          </section>
-
-          <section className="search-card">
-            <div className="search-heading">
-              <div>
-                <h2>What are you researching?</h2>
-                <p>Search by topic, concept, subject or book title.</p>
-              </div>
-              <span className="search-heading-icon">⌕</span>
-            </div>
-
-            <form className="search-form" onSubmit={handleSearch}>
-              <span className="search-icon">⌕</span>
-              <input
-                aria-label="Search library resources"
-                placeholder="e.g. database transactions, machine learning..."
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-              />
-
-              {query && (
-                <button
-                  className="clear-button"
-                  type="button"
-                  onClick={() => setQuery('')}
-                  aria-label="Clear search"
-                >
-                  ×
-                </button>
-              )}
-
-              <button className="search-button" type="submit">
-                Search resources <span>→</span>
-              </button>
-            </form>
-
-            <div className="suggestions">
-              <span>Try:</span>
-              {['Database design', 'Algorithms', 'Data science'].map(
-                (suggestion) => (
-                  <button
-                    key={suggestion}
-                    type="button"
-                    onClick={() => {
-                      setQuery(suggestion)
-                      setSubmittedQuery(suggestion)
-                      setSelectedBook(null)
-                      setShowAllBooks(false)
-                      setActiveTab('search')
-                    }}
-                  >
-                    {suggestion}
-                  </button>
-                ),
-              )}
-            </div>
-          </section>
-
-          <div className="section-tabs">
-            <button
-              className={activeTab === 'search' ? 'tab active-tab' : 'tab'}
-              onClick={() => setActiveTab('search')}
-            >
-              <span>▦</span> Resource discovery
-            </button>
-
-            <button
-              className={activeTab === 'notes' ? 'tab active-tab' : 'tab'}
-              onClick={() => setActiveTab('notes')}
-            >
-              <span>▤</span> Study notes
-              <span className="tab-number">
-                {notesResponse?.sections.length ?? 3}
-              </span>
-            </button>
-          </div>
-
-          {activeTab === 'search' ? (
-            <section className="results-section">
-              <div className="section-heading">
-                <div>
-                  <h2>
-                    {submittedQuery
-                      ? `Results for "${submittedQuery}"`
-                      : 'Explore library resources'}
-                  </h2>
-                  <p>
-                    {filteredBooks.length} sample{' '}
-                    {filteredBooks.length === 1 ? 'resource' : 'resources'}{' '}
-                    available in this preview
-                  </p>
-                </div>
-                <span className="sample-label">SAMPLE CATALOGUE DATA</span>
-              </div>
-
-              {visibleBooks.length > 0 ? (
-                <div className="resource-list">
-                  {visibleBooks.map((book) => (
-                    <article className="resource-card" key={book.id}>
-                      <div className={`resource-cover cover-${book.id}`}>
-                        <div className="cover-spine" />
-                        <span className="cover-small">
-                          {book.category.toUpperCase()}
-                        </span>
-                        <strong>{book.title}</strong>
-                        <span className="cover-bottom">LIBRALINK</span>
-                      </div>
-
-                      <div className="resource-details">
-                        <div className="resource-topline">
-                          <span className="category-tag">{book.category}</span>
-                          <span
-                            className={`access-tag ${
-                              book.access === 'Digital text available'
-                                ? 'access-digital'
-                                : book.access === 'Physical only'
-                                  ? 'access-physical'
-                                  : 'access-catalogue'
-                            }`}
-                          >
-                            <span className="access-dot" />
-                            {book.access}
-                          </span>
-                        </div>
-
-                        <h3>{book.title}</h3>
-                        <p className="book-author">{book.author}</p>
-                        <p className="book-description">{book.description}</p>
-
-                        <div className="resource-meta">
-                          <span>▧ {book.year}</span>
-                          <span>⌖ {book.location}</span>
-                        </div>
-
-                        <div className="resource-actions">
-                          <button
-                            className="primary-small"
-                            onClick={() => setSelectedBook(book)}
-                          >
-                            View resource <span>→</span>
-                          </button>
-                          <button
-                            className="text-button"
-                            onClick={() => exploreNotes(book)}
-                          >
-                            Explore study notes
-                          </button>
-                        </div>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <div className="empty-state">
-                  <div className="empty-icon">⌕</div>
-                  <h3>No matching sample resources</h3>
-                  <p>
-                    Try a broader topic or clear your search to browse the
-                    sample catalogue.
-                  </p>
-                  <button className="primary-small" onClick={resetSearch}>
-                    Show all resources
-                  </button>
-                </div>
-              )}
-
-              {filteredBooks.length > 3 && !showAllBooks && (
-                <button
-                  className="show-more-button"
-                  onClick={() => setShowAllBooks(true)}
-                >
-                  Show all resources
-                </button>
-              )}
-            </section>
-          ) : (
-            <section className="notes-section">
-              <div className="section-heading">
-                <div>
-                  <h2>Study notes</h2>
-                  <p>
-                    Generate notes from accessible source passages when the
-                    backend is available.
-                  </p>
-                </div>
-                <span className="sample-label">
-                  {notesResponse ? 'API RESPONSE' : 'DEMO CONTENT'}
-                </span>
-              </div>
-
-              <form
-                className="search-form notes-query-form"
-                onSubmit={handleGenerateNotes}
-              >
-                <span className="search-icon">⌕</span>
-                <input
-                  aria-label="Topic for study notes"
-                  placeholder="Enter a topic, e.g. binary search trees"
-                  value={notesQuery}
-                  maxLength={300}
-                  onChange={(event) => setNotesQuery(event.target.value)}
-                />
-                <button
-                  className="search-button"
-                  type="submit"
-                  disabled={notesLoading}
-                >
-                  {notesLoading ? 'Generating…' : 'Generate notes'}
-                  {!notesLoading && <span>→</span>}
-                </button>
-              </form>
-
-              {notesLoading && (
-                <div className="empty-state" role="status" aria-live="polite">
-                  <h3>Preparing your study notes</h3>
-                  <p>
-                    Searching accessible passages and checking citations.
-                    This may take a moment.
-                  </p>
-                </div>
-              )}
-
-              {notesError && (
-                <div className="notes-warning" role="alert">
-                  <span>!</span>
-                  <p>
-                    <strong>Unable to retrieve study notes.</strong>{' '}
-                    {notesError}
-                    <br />
-                    The sample notes below are demonstration content, not the
-                    answer to your query.
-                  </p>
-                </div>
-              )}
-
-              {notesResponse && !notesResponse.answerable && (
-                <div className="notes-warning" role="status">
-                  <span>!</span>
-                  <p>
-                    <strong>
-                      {notesResponse.title || 'Study notes unavailable'}
-                    </strong>
-                    <br />
-                    {notesResponse.message ||
-                      'There is not enough accessible evidence to answer this question.'}
-                    {notesResponse.generated_by === 'gemini' &&
-                      ' The AI service may be unavailable.'}
-                  </p>
-                </div>
-              )}
-
-              {notesResponse?.answerable && (
-                <>
-                  <div className="notice-banner notes-response-banner">
-                    <span className="notice-symbol">i</span>
-                    <p>
-                      <strong>Source-grounded response.</strong> These notes
-                      use the passages returned by the backend. Check the
-                      cited sources before relying on them.
-                    </p>
-                  </div>
-
-                  {notesResponse.title && <h3>{notesResponse.title}</h3>}
-                  {notesResponse.message && <p>{notesResponse.message}</p>}
-
-                  {notesResponse.sections.length > 0 ? (
-                    <div className="notes-list">
-                      {notesResponse.sections.map((note, index) => (
-                        <article
-                          className="note-card"
-                          key={`${note.heading}-${index}`}
-                        >
-                          <div className="note-number">
-                            {String(index + 1).padStart(2, '0')}
-                          </div>
-
-                          <div className="note-content">
-                            <h3>{note.heading}</h3>
-                            <p>{note.content}</p>
-
-                            {note.citations.length > 0 && (
-                              <div className="citation-list">
-                                <strong>Sources</strong>
-                                {note.citations.map((chunkId) => {
-                                  const source = notesResponse.sources.find(
-                                    (item) => item.chunk_id === chunkId,
-                                  )
-
-                                  return source ? (
-                                    <div key={chunkId}>
-                                      {renderSource(source)}
-                                    </div>
-                                  ) : (
-                                    <span
-                                      className="citation-chip"
-                                      key={chunkId}
-                                    >
-                                      Citation reference: {chunkId} — source
-                                      details unavailable
-                                    </span>
-                                  )
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        </article>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="empty-state">
-                      <h3>No supported note sections</h3>
-                      <p>
-                        The API returned no note sections. No answer will be
-                        displayed as if it were verified.
-                      </p>
-                    </div>
-                  )}
-                </>
-              )}
-
-              {!notesLoading && !notesResponse && (
-                <>
-                  <div className="notes-warning">
-                    <span>!</span>
-                    <p>
-                      <strong>
-                        These are not AI-generated or source-verified notes.
-                      </strong>{' '}
-                      They are placeholders for the prototype. Page references
-                      have not been verified.
-                    </p>
-                  </div>
-
-                  <div className="notes-list">
-                    {sampleNotes.map((note, index) => (
-                      <article className="note-card" key={note.heading}>
-                        <div className="note-number">
-                          {String(index + 1).padStart(2, '0')}
-                        </div>
-                        <div className="note-content">
-                          <h3>{note.heading}</h3>
-                          <p>{note.text}</p>
-                          <div className="citation-chip">
-                            <span>▤</span>
-                            <span>
-                              {note.source} · {note.page}
-                            </span>
-                            <span className="unverified-label">Unverified</span>
-                          </div>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                </>
-              )}
-
-              {notesResponse?.limitations &&
-                notesResponse.limitations.length > 0 && (
-                  <div className="notes-warning">
-                    <span>i</span>
-                    <div>
-                      <strong>Response limitations</strong>
-                      <ul>
-                        {notesResponse.limitations.map((limitation, index) => (
-                          <li key={`${limitation}-${index}`}>{limitation}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
-                )}
-
-              {notesResponse?.disclaimer && (
-                <p className="notes-disclaimer">
-                  {notesResponse.disclaimer}
-                </p>
-              )}
-
-              {notesResponse?.sources.some((source) => source.is_sample_data) && (
-                <p className="notes-disclaimer">
-                  This response contains demo source records. Verify the
-                  original material before relying on it.
-                </p>
-              )}
-
-              <button className="print-button" onClick={() => window.print()}>
-                Print study notes ↗
-              </button>
-            </section>
-          )}
-
-          {selectedBook && (
-            <div
-              className="modal-backdrop"
-              onClick={() => setSelectedBook(null)}
-              role="presentation"
-            >
-              <section
-                className="resource-modal"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="modal-title"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <button
-                  className="modal-close"
-                  aria-label="Close resource details"
-                  onClick={() => setSelectedBook(null)}
-                >
-                  ×
-                </button>
-
-                <div className="eyebrow">RESOURCE DETAILS</div>
-                <h2 id="modal-title">{selectedBook.title}</h2>
-                <p className="modal-author">{selectedBook.author}</p>
-
-                <div className="modal-status">
-                  <span
-                    className={`access-dot ${
-                      selectedBook.access === 'Digital text available'
-                        ? 'dot-green'
-                        : 'dot-orange'
-                    }`}
-                  />
-                  {selectedBook.access}
-                </div>
-
-                <p>{selectedBook.description}</p>
-
-                <div className="modal-info">
-                  <div>
-                    <small>Category</small>
-                    <strong>{selectedBook.category}</strong>
-                  </div>
-                  <div>
-                    <small>Year</small>
-                    <strong>{selectedBook.year}</strong>
-                  </div>
-                  <div>
-                    <small>Location</small>
-                    <strong>{selectedBook.location}</strong>
-                  </div>
-                </div>
-
-                {selectedBook.access === 'Physical only' ? (
-                  <div className="access-message">
-                    <strong>Physical resource</strong>
-                    <p>
-                      AI has not read this book. A verified shelf or call number
-                      is not available in this sample record.
-                    </p>
-                  </div>
-                ) : selectedBook.access === 'Catalogue only' ? (
-                  <div className="access-message">
-                    <strong>Catalogue record only</strong>
-                    <p>No full text is available to the AI in this preview.</p>
-                  </div>
-                ) : (
-                  <div className="access-message">
-                    <strong>Text availability is a sample status</strong>
-                    <p>
-                      This preview does not contain verified source passages,
-                      page numbers or an authorized library link.
-                    </p>
-                  </div>
-                )}
-
-                <button
-                  className="primary-small modal-done"
-                  onClick={() => setSelectedBook(null)}
-                >
-                  Close details
-                </button>
-              </section>
-            </div>
-          )}
-
-          <footer className="page-footer">
-            <span>LibraLink · Library research companion</span>
-            <span>
-              Prototype with sample data · Verify sources before use
-            </span>
-          </footer>
-        </div>
-      </main>
-    </div>
-  )
+	const [activeView, setActiveView] = useState<View>('resources')
+	const [books, setBooks] = useState<BookRecord[]>([])
+	const [booksLoading, setBooksLoading] = useState(true)
+	const [booksError, setBooksError] = useState('')
+	const [resourceQuery, setResourceQuery] = useState('')
+	const [selectedBook, setSelectedBook] = useState<BookRecord | null>(null)
+	const [searchResults, setSearchResults] = useState<SearchResponse | null>(null)
+	const [searchLoading, setSearchLoading] = useState(false)
+	const [searchError, setSearchError] = useState('')
+
+	const [notesQuery, setNotesQuery] = useState('')
+	const [notes, setNotes] = useState<NotesResponse | null>(null)
+	const [notesLoading, setNotesLoading] = useState(false)
+	const [notesError, setNotesError] = useState('')
+
+	const [quizTopic, setQuizTopic] = useState('')
+	const [questionCount, setQuestionCount] = useState(5)
+	const [quiz, setQuiz] = useState<QuizResponse | null>(null)
+	const [answers, setAnswers] = useState<Record<string, string>>({})
+	const [quizResults, setQuizResults] = useState<QuizSubmitResponse | null>(null)
+	const [quizLoading, setQuizLoading] = useState(false)
+	const [quizSubmitting, setQuizSubmitting] = useState(false)
+	const [quizError, setQuizError] = useState('')
+
+	useEffect(() => {
+		let current = true
+		getBooks()
+			.then((response) => {
+				if (current) setBooks(Array.isArray(response.books) ? response.books : [])
+			})
+			.catch((error: unknown) => {
+				if (current) setBooksError(errorText(error))
+			})
+			.finally(() => {
+				if (current) setBooksLoading(false)
+			})
+		return () => {
+			current = false
+		}
+	}, [])
+
+	const visibleBooks = books.filter((book) => {
+		const query = resourceQuery.trim().toLocaleLowerCase()
+		if (!query) return true
+		return [book.title, book.author, book.edition, book.filename]
+			.some((value) => value?.toLocaleLowerCase().includes(query))
+	})
+
+	async function handleResourceSearch(event: React.FormEvent<HTMLFormElement>) {
+		event.preventDefault()
+		setSearchResults(null)
+		setSearchError('')
+		if (!resourceQuery.trim()) return
+		setSearchLoading(true)
+		try {
+			setSearchResults(await searchBooks({ query: resourceQuery }))
+		} catch (error) {
+			setSearchError(errorText(error))
+		} finally {
+			setSearchLoading(false)
+		}
+	}
+
+	async function handleNotes(event: React.FormEvent<HTMLFormElement>) {
+		event.preventDefault()
+		setNotes(null)
+		setNotesError('')
+		setNotesLoading(true)
+		try {
+			setNotes(await getStudyNotes({ query: notesQuery }))
+		} catch (error) {
+			setNotesError(errorText(error))
+		} finally {
+			setNotesLoading(false)
+		}
+	}
+
+	async function requestQuiz() {
+		if (quizLoading || quizSubmitting) return
+		setQuiz(null)
+		setAnswers({})
+		setQuizResults(null)
+		setQuizError('')
+		setQuizLoading(true)
+		try {
+			setQuiz(await generateQuiz({ topic: quizTopic, question_count: questionCount }))
+		} catch (error) {
+			setQuizError(errorText(error))
+		} finally {
+			setQuizLoading(false)
+		}
+	}
+
+	async function handleGenerateQuiz(event: React.FormEvent<HTMLFormElement>) {
+		event.preventDefault()
+		await requestQuiz()
+	}
+
+	async function handleSubmitQuiz() {
+		if (!quiz?.quiz_id || !quiz.questions.length || quizSubmitting || quizResults) return
+		setQuizError('')
+		setQuizSubmitting(true)
+		try {
+			const result = await submitQuiz({
+				quiz_id: quiz.quiz_id,
+				answers: quiz.questions
+					.filter((question) => answers[question.question_id] !== undefined)
+					.map((question) => ({
+						question_id: question.question_id,
+						selected_answer: answers[question.question_id],
+					})),
+			})
+			setQuizResults(result)
+		} catch (error) {
+			setQuizError(errorText(error))
+		} finally {
+			setQuizSubmitting(false)
+		}
+	}
+
+	const answeredCount = quiz?.questions.filter(
+		(question) => answers[question.question_id] !== undefined,
+	).length ?? 0
+	const quizSourceById = new Map((quiz?.sources ?? []).map((source) => [source.chunk_id, source]))
+	const resultsById = new Map((quizResults?.results ?? []).map((result) => [result.question_id, result]))
+
+	return (
+		<div className="app-shell">
+			<aside className="sidebar">
+				<a className="brand" href="#home" onClick={(event) => event.preventDefault()}>
+					<span className="brand-icon">L</span>
+					<span><strong>LibraLink</strong><small>Library study workspace</small></span>
+				</a>
+				<div className="sidebar-label">WORKSPACE</div>
+				<nav aria-label="Main navigation">
+					{(['resources', 'notes', 'quiz'] as const).map((view) => (
+						<button
+							className={`nav-item${activeView === view ? ' active' : ''}`}
+							key={view}
+							onClick={() => setActiveView(view)}
+							type="button"
+						>
+							<span className="nav-icon" aria-hidden="true">{view === 'resources' ? 'B' : view === 'notes' ? 'N' : 'Q'}</span>
+							{viewLabels[view]}
+						</button>
+					))}
+				</nav>
+				<div className="sidebar-divider" />
+				<div className="library-link"><span aria-hidden="true">+</span> Library catalogue</div>
+				<div className="sidebar-bottom">
+					<div className="help-card">
+						<span className="help-icon">i</span>
+						<strong>Source-grounded study</strong>
+						<p>Notes and practice questions are based on passages available to LibraLink.</p>
+					</div>
+					<div className="profile">
+						<span className="avatar">S</span>
+						<span><strong>Student workspace</strong><small>Local session</small></span>
+					</div>
+				</div>
+			</aside>
+
+			<main className="main-content">
+				<header className="topbar">
+					<div className="breadcrumb">Workspace <span>/</span> {viewLabels[activeView]}</div>
+					<div className="prototype-pill"><span className="status-dot" /> Library study tools</div>
+				</header>
+				<div className="page-container">
+					<div className="notice-banner">
+						<span className="notice-symbol">i</span>
+						<p>Study responses use retrieved library passages. Check the cited source for context and important details.</p>
+					</div>
+
+					<section className="welcome-section">
+						<div>
+							<div className="eyebrow">LIBRARY LEARNING, CONNECTED</div>
+							<h1>Make your next<br /><span>study session count.</span></h1>
+							<p className="welcome-description">Find resources, build source-linked notes, and check your understanding with practice questions.</p>
+						</div>
+						<div className="welcome-illustration" aria-hidden="true">
+							<div className="illustration-circle circle-one" />
+							<div className="illustration-circle circle-two" />
+							<div className="book-stack">
+								<div className="book book-back" />
+								<div className="book book-middle" />
+								<div className="book book-front">
+									<span className="cover-small">LIBRARY STUDY</span>
+									<div className="book-emblem">L</div>
+									<div className="book-line" /><div className="book-line short" />
+								</div>
+							</div>
+							<div className="floating-note note-one">Source linked</div>
+							<div className="floating-note note-two">Keep learning</div>
+						</div>
+					</section>
+
+					<nav className="section-tabs" aria-label="Study workspace views">
+						{(['resources', 'notes', 'quiz'] as const).map((view) => (
+							<button
+								className={`tab${activeView === view ? ' active-tab' : ''}`}
+								key={view}
+								onClick={() => setActiveView(view)}
+								type="button"
+								aria-current={activeView === view ? 'page' : undefined}
+							>
+								<span aria-hidden="true">{view === 'resources' ? 'B' : view === 'notes' ? 'N' : 'Q'}</span>
+								{viewLabels[view]}
+								{view === 'resources' && <span className="tab-number">{books.length}</span>}
+							</button>
+						))}
+					</nav>
+
+					{activeView === 'resources' && (
+						<>
+							<section className="search-card">
+								<div className="search-heading">
+									<div><h2>Discover library resources</h2><p>Browse the available catalogue and narrow by title, author, or edition.</p></div>
+									<span className="search-heading-icon" aria-hidden="true">⌕</span>
+								</div>
+								<form className="search-form" onSubmit={handleResourceSearch}>
+									<span className="search-icon" aria-hidden="true">⌕</span>
+									<input aria-label="Search catalogue" value={resourceQuery} onChange={(event) => setResourceQuery(event.target.value)} placeholder="Search books, topics, or authors..." />
+									  {resourceQuery && <button className="clear-button" type="button" aria-label="Clear search" onClick={() => { setResourceQuery(''); setSearchResults(null); setSearchError('') }}>×</button>}
+									  <button className="search-button" type="submit" disabled={searchLoading}>{searchLoading ? 'Searching...' : 'Search'} <span>→</span></button>
+								</form>
+								<div className="suggestions"><span>Explore:</span>{['statistics', 'data structures', 'machine learning'].map((term) => <button key={term} type="button" onClick={() => setResourceQuery(term)}>{term}</button>)}</div>
+							</section>
+
+							<section className="results-section">
+								<div className="section-heading">
+									<div><h2>Available resources</h2><p>{booksLoading ? 'Loading the library catalogue...' : `${visibleBooks.length} of ${books.length} catalogue records`}</p></div>
+									<span className="sample-label">LIBRARY CATALOGUE</span>
+								</div>
+								{booksError && <div className="notes-warning" role="alert"><span>!</span><p>{booksError}</p></div>}
+								{searchError && <div className="notes-warning" role="alert"><span>!</span><p>{searchError}</p></div>}
+								{searchLoading && <div className="empty-state" role="status"><p>Searching indexed book passages...</p></div>}
+								{searchResults && <section className="passage-results" aria-label="Passage search results">
+									<div className="section-heading"><div><h2>Matching passages</h2><p>{searchResults.insufficient_evidence ? 'No sufficiently relevant passages found.' : `${searchResults.results.length} source passages for “${searchResults.query}”`}</p></div></div>
+									{searchResults.message && <p className="book-description">{searchResults.message}</p>}
+									{searchResults.results.map((result) => <article className="note-card" key={result.chunk_id || `${result.book_id}-${result.pdf_page_index}`}><span className="note-number" aria-hidden="true">↗</span><div className="note-content"><h3>{result.title || 'Library passage'}</h3><p className="book-author">{result.author || 'Author not listed'}{result.page_number != null ? ` · Page ${result.page_number}` : result.printed_page_label ? ` · Printed label ${result.printed_page_label}${result.printed_page_verified ? '' : ' (unverified)'}` : result.pdf_page_index != null ? ` · PDF page ${result.pdf_page_index + (result.pdf_page_base ?? 0)}` : ' · Page not listed'}</p><p>{result.excerpt || 'No excerpt is available for this passage.'}</p></div></article>)}
+								</section>}
+								{booksLoading ? <div className="empty-state"><p>Loading catalogue records...</p></div> : visibleBooks.length ? (
+									<div className="resource-list">
+										{visibleBooks.map((book, index) => {
+											const accessClass = pageLabel(book) === 'Full text available' ? 'access-digital' : pageLabel(book) === 'Physical collection' ? 'access-physical' : 'access-catalogue'
+											return (
+												<article className="resource-card" key={book.book_id}>
+													<div className={`resource-cover cover-${index % 3 + 1}`}><span className="cover-spine" /><span className="cover-small">LIBRARY RESOURCE</span><strong>{book.title}</strong><span className="cover-bottom">LIBRALINK</span></div>
+													<div className="resource-details">
+														<div className="resource-topline"><span className="category-tag">{book.format || book.edition || 'Catalogue record'}</span><span className={`access-tag ${accessClass}`}><span className="access-dot" />{pageLabel(book)}</span></div>
+														<h3>{book.title}</h3>
+														<p className="book-author">{book.author || 'Author not listed'}{book.edition ? ` · ${book.edition}` : ''}</p>
+														{book.metadata_notes && <p className="book-description">{book.metadata_notes}</p>}
+														<div className="resource-meta">{book.filename && <span>{book.filename}</span>}{book.call_number && <span>Call no. {book.call_number}</span>}{book.shelf_location && <span>{book.shelf_location}</span>}</div>
+														<div className="resource-actions"><button className="primary-small" type="button" onClick={() => setSelectedBook(book)}>Resource details <span>→</span></button>{book.authorized_url && <a className="text-button" href={book.authorized_url} target="_blank" rel="noreferrer">Open access link</a>}</div>
+													</div>
+												</article>
+											)
+										})}
+									</div>
+								) : (
+									  <div className="empty-state"><div className="empty-icon">⌕</div><h3>No matching catalogue records</h3><p>Try another title, author, or edition, or clear the search to browse the catalogue.</p><button className="show-more-button" type="button" onClick={() => setResourceQuery('')}>Clear search</button></div>
+								)}
+							</section>
+						</>
+					)}
+
+					{activeView === 'notes' && (
+						<section className="notes-section">
+							<div className="section-heading"><div><h2>Study Notes</h2><p>Build a source-linked response from retrieved passages.</p></div></div>
+							<section className="search-card">
+								<form className="search-form" onSubmit={handleNotes}>
+									<span className="search-icon" aria-hidden="true">⌕</span>
+									<input aria-label="Study notes question" value={notesQuery} onChange={(event) => setNotesQuery(event.target.value)} placeholder="What would you like to study?" required maxLength={300} />
+									<button className="search-button" type="submit" disabled={notesLoading}>{notesLoading ? 'Building notes...' : 'Generate notes'} <span>→</span></button>
+								</form>
+							</section>
+							{notesError && <div className="notes-warning" role="alert"><span>!</span><p>{notesError}</p></div>}
+							{notesLoading && <div className="empty-state" role="status"><p>Searching the indexed passages...</p></div>}
+							{notes && !notes.answerable && <div className="empty-state" role="status"><div className="empty-icon">i</div><h3>No supported passages found</h3><p>{notes.message || 'The indexed collection did not provide enough evidence for this question.'}</p></div>}
+							{notes?.answerable && (
+								<div className="notes-list">
+									{notes.title && <div className="section-heading"><h2>{notes.title}</h2></div>}
+									{notes.message && <p className="book-description">{notes.message}</p>}
+									{notes.sections.map((section, index) => (
+										<article className="note-card" key={`${section.heading}-${index}`}>
+											<span className="note-number">{String(index + 1).padStart(2, '0')}</span>
+											<div className="note-content"><h3>{section.heading || 'Study note'}</h3><p>{section.content}</p>
+												{(section.citations ?? []).map((citationId) => {
+													const source = notes.sources.find((item) => item.chunk_id === citationId)
+													return <div className="citation-chip" key={citationId}><span aria-hidden="true">↗</span><strong>{source?.title || 'Cited passage'}</strong><span>{source?.page_number != null ? pageNumber(source.page_number) : source?.printed_page_label ? `Printed label ${source.printed_page_label}${source.printed_page_verified ? '' : ' (unverified)'}` : source?.pdf_page_index != null ? `PDF page ${source.pdf_page_index + (source.pdf_page_base ?? 0)}` : 'Page not listed'}</span>{source?.excerpt && <span>{source.excerpt}</span>}</div>
+												})}
+											</div>
+										</article>
+									))}
+									{notes.limitations?.length > 0 && <div className="notes-warning"><span>!</span><div>{notes.limitations.map((limitation) => <p key={limitation}>{limitation}</p>)}</div></div>}
+									{notes.disclaimer && <p className="page-footer">{notes.disclaimer}</p>}
+								</div>
+							)}
+						</section>
+					)}
+
+					{activeView === 'quiz' && (
+						<section className="notes-section">
+							<div className="section-heading"><div><h2>Practice Quiz</h2><p>Generate multiple-choice questions grounded in retrieved textbook passages.</p></div></div>
+							<section className="search-card">
+								<form className="search-form" onSubmit={handleGenerateQuiz}>
+									<span className="search-icon" aria-hidden="true">Q</span>
+									<input aria-label="Quiz topic" value={quizTopic} onChange={(event) => setQuizTopic(event.target.value)} placeholder="Enter a topic to practice..." required maxLength={300} />
+									<label className="quiz-count-label">Questions<select aria-label="Question count" value={questionCount} onChange={(event) => setQuestionCount(Number(event.target.value))}><option value={3}>3</option><option value={5}>5</option><option value={10}>10</option></select></label>
+									<button className="search-button" type="submit" disabled={quizLoading}>{quizLoading ? 'Generating...' : 'New quiz'} <span>→</span></button>
+								</form>
+							</section>
+							{quizError && <div className="notes-warning" role="alert"><span>!</span><div><p>{quizError}</p><button className="text-button" type="button" onClick={() => void requestQuiz()} disabled={quizLoading}>Retry request</button></div></div>}
+							{quizLoading && <div className="empty-state" role="status"><p>Retrieving passages and preparing questions...</p></div>}
+							{quiz && !quiz.answerable && <div className="empty-state" role="status"><div className="empty-icon">i</div><h3>Quiz is unavailable</h3><p>{quiz.message || 'There is not enough source evidence to create a quiz.'}</p><button className="show-more-button" type="button" onClick={() => void requestQuiz()} disabled={quizLoading}>Retry generation</button></div>}
+							{quiz?.answerable && quiz.questions.length > 0 && (
+								<div className="quiz-content">
+									{quiz.generated_by && <p className="book-description">Generated by {quiz.generated_by}. Answers stay hidden until submission.</p>}
+									{quiz.questions.map((question, index) => {
+										const result = resultsById.get(question.question_id)
+										const source = question.source_chunk_id ? quizSourceById.get(question.source_chunk_id) : undefined
+										return (
+											<article className="note-card quiz-question" key={question.question_id}>
+												<span className="note-number">{String(index + 1).padStart(2, '0')}</span>
+												<div className="note-content"><h3>{question.question}</h3>
+													<div className="quiz-options">{question.options.map((option) => <label className="quiz-option" key={option}><input type="radio" name={question.question_id} value={option} checked={answers[question.question_id] === option} disabled={!!quizResults} onChange={() => setAnswers((current) => ({ ...current, [question.question_id]: option }))} /><span>{option}</span></label>)}</div>
+													{source && <div className="citation-chip"><span aria-hidden="true">↗</span><strong>{source.title || 'Source passage'}</strong><span>{pageNumber(question.source_page ?? source.page_number)}</span></div>}
+													{result && <div className={`quiz-feedback ${result.is_correct ? 'correct' : 'incorrect'}`}><strong>{result.is_correct ? 'Correct' : result.answered ? 'Not quite' : 'Not answered'}</strong><p>Correct answer: {result.correct_answer}</p><p>{result.explanation}</p>{result.source_page != null && <small>{pageNumber(result.source_page)}</small>}</div>}
+												</div>
+											</article>
+										)
+									})}
+									{!quizResults ? <div className="quiz-submit-row"><span>{answeredCount} of {quiz.questions.length} answered</span><button className="search-button" type="button" onClick={handleSubmitQuiz} disabled={quizSubmitting || answeredCount !== quiz.questions.length}>{quizSubmitting ? 'Submitting...' : 'Submit answers'} <span>→</span></button></div> : <div className="quiz-score"><strong>{quizResults.score} / {quizResults.total}</strong><span>{quizResults.percentage}% · {quizResults.correct_count} correct · {quizResults.wrong_count} incorrect</span></div>}
+								</div>
+							)}
+							{quiz?.answerable && quiz.questions.length === 0 && <div className="empty-state"><h3>No valid questions returned</h3><p>{quiz.message || 'The retrieved evidence did not support valid questions.'}</p></div>}
+						</section>
+					)}
+
+					<footer className="page-footer"><span>LibraLink · Library learning workspace</span><span>Use cited sources to verify important information.</span></footer>
+				</div>
+			</main>
+
+			{selectedBook && <div className="modal-backdrop" role="presentation" onClick={() => setSelectedBook(null)}><section className="resource-modal" role="dialog" aria-modal="true" aria-labelledby="resource-modal-title" onClick={(event) => event.stopPropagation()}><button className="modal-close" type="button" aria-label="Close details" onClick={() => setSelectedBook(null)}>×</button><h2 id="resource-modal-title">{selectedBook.title}</h2><p className="modal-author">{selectedBook.author || 'Author not listed'}{selectedBook.edition ? ` · ${selectedBook.edition}` : ''}</p><div className="modal-status"><span className="access-dot dot-green" />{pageLabel(selectedBook)}</div><div className="modal-info"><div><small>Catalogue ID</small><strong>{selectedBook.book_id}</strong></div><div><small>Source file</small><strong>{selectedBook.filename || selectedBook.source_file_id || 'Not listed'}</strong></div><div><small>Call number</small><strong>{selectedBook.call_number || 'Not listed'}</strong></div><div><small>Location</small><strong>{selectedBook.shelf_location || 'Not listed'}</strong></div></div>{selectedBook.metadata_notes && <div className="access-message"><strong>Catalogue notes</strong><p>{selectedBook.metadata_notes}</p></div>}{selectedBook.authorized_url && <a className="primary-small modal-done" href={selectedBook.authorized_url} target="_blank" rel="noreferrer">Open authorized resource</a>}<button className="print-button modal-done" type="button" onClick={() => setSelectedBook(null)}>Done</button></section></div>}
+		</div>
+	)
 }
 
 export default App
