@@ -1,0 +1,34 @@
+{
+  "queries": [
+    {
+      "query": "normal distribution",
+      "expected_book_id": "bk_demo_stats",
+      "expected_to_return_results": true
+    },
+    {
+      "query": "probability event",
+      "expected_book_id": "bk_demo_stats",
+      "expected_to_return_results": true
+    },
+    {
+      "query": "mean and variance",
+      "expected_book_id": "bk_demo_stats",
+      "expected_to_return_results": true
+    },
+    {
+      "query": "binomial distribution",
+      "expected_book_id": "bk_demo_stats",
+      "expected_to_return_results": true
+    },
+    {
+      "query": "quantum mechanics black holes",
+      "expected_book_id": null,
+      "expected_to_return_results": false
+    },
+    {
+      "query": "",
+      "expected_book_id": null,
+      "expected_to_return_results": false
+    }
+  ]
+}

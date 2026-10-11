@@ -1,6 +1,16 @@
 {
   "books": [
     {
+      "book_id": "bk_demo_stats",
+      "source_file_id": "src_demo_stats",
+      "title": "Demo Statistics Notes",
+      "author": "LibraLink Demo Team",
+      "edition": "Demo edition",
+      "filename": "stats_intro.pdf",
+      "access_status": "full_text_available",
+      "metadata_notes": "Team-authored demo notes"
+    },
+    {
       "book_id": "demo-dsa",
       "source_file_id": "demo-file-001",
       "title": "Sample Data Structures Textbook",
